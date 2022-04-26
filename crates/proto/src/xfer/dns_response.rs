@@ -23,19 +23,19 @@ use crate::rr::rdata::SOA;
 use crate::rr::{RData, RecordType};
 
 /// A stream returning DNS responses
-pub struct DnsResponseStream {
-    inner: DnsResponseStreamInner,
+pub struct DnsResponseStream<T = DnsResponse> {
+    inner: DnsResponseStreamInner<T>,
     done: bool,
 }
 
-impl DnsResponseStream {
-    fn new(inner: DnsResponseStreamInner) -> Self {
+impl<T> DnsResponseStream<T> {
+    fn new(inner: DnsResponseStreamInner<T>) -> Self {
         Self { inner, done: false }
     }
 }
 
-impl Stream for DnsResponseStream {
-    type Item = Result<DnsResponse, ProtoError>;
+impl<T> Stream for DnsResponseStream<T> {
+    type Item = Result<T, ProtoError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use DnsResponseStreamInner::*;
@@ -82,45 +82,44 @@ impl Stream for DnsResponseStream {
     }
 }
 
-impl From<TimeoutFuture> for DnsResponseStream {
-    fn from(f: TimeoutFuture) -> Self {
+impl<T> From<TimeoutFuture<T>> for DnsResponseStream<T> {
+    fn from(f: TimeoutFuture<T>) -> Self {
         Self::new(DnsResponseStreamInner::Timeout(f))
     }
 }
 
-impl From<mpsc::Receiver<ProtoResult<DnsResponse>>> for DnsResponseStream {
-    fn from(receiver: mpsc::Receiver<ProtoResult<DnsResponse>>) -> Self {
+impl<T> From<mpsc::Receiver<ProtoResult<T>>> for DnsResponseStream<T> {
+    fn from(receiver: mpsc::Receiver<ProtoResult<T>>) -> Self {
         Self::new(DnsResponseStreamInner::Receiver(receiver))
     }
 }
 
-impl From<ProtoError> for DnsResponseStream {
+impl<T> From<ProtoError> for DnsResponseStream<T> {
     fn from(e: ProtoError) -> Self {
         Self::new(DnsResponseStreamInner::Error(Some(e)))
     }
 }
 
-impl<F> From<Pin<Box<F>>> for DnsResponseStream
+impl<T, F> From<Pin<Box<F>>> for DnsResponseStream<T>
 where
-    F: Future<Output = Result<DnsResponse, ProtoError>> + Send + 'static,
+    F: Future<Output = Result<T, ProtoError>> + Send + 'static,
 {
     fn from(f: Pin<Box<F>>) -> Self {
         Self::new(DnsResponseStreamInner::Boxed(
-            f as Pin<Box<dyn Future<Output = Result<DnsResponse, ProtoError>> + Send>>,
+            f as Pin<Box<dyn Future<Output = Result<T, ProtoError>> + Send>>,
         ))
     }
 }
 
-enum DnsResponseStreamInner {
-    Timeout(TimeoutFuture),
-    Receiver(mpsc::Receiver<ProtoResult<DnsResponse>>),
+enum DnsResponseStreamInner<T> {
+    Timeout(TimeoutFuture<T>),
+    Receiver(mpsc::Receiver<ProtoResult<T>>),
     Error(Option<ProtoError>),
-    Boxed(Pin<Box<dyn Future<Output = Result<DnsResponse, ProtoError>> + Send>>),
+    Boxed(Pin<Box<dyn Future<Output = Result<T, ProtoError>> + Send>>),
 }
 
-type TimeoutFuture = Pin<
-    Box<dyn Future<Output = Result<Result<DnsResponse, ProtoError>, io::Error>> + Send + 'static>,
->;
+type TimeoutFuture<T> =
+    Pin<Box<dyn Future<Output = Result<Result<T, ProtoError>, io::Error>> + Send + 'static>>;
 
 // TODO: this needs to have the IP addr of the remote system...
 // TODO: see https://github.com/bluejekyll/trust-dns/issues/383 for removing vec of messages and instead returning a Stream

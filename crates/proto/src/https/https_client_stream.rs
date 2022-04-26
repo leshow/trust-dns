@@ -57,12 +57,11 @@ impl Display for HttpsClientStream {
 }
 
 impl HttpsClientStream {
-    async fn inner_send(
+    async fn inner_send_bytes(
         h2: SendRequest<Bytes>,
         message: Bytes,
         name_server_name: Arc<str>,
-        name_server: SocketAddr,
-    ) -> Result<DnsResponse, ProtoError> {
+    ) -> Result<BytesMut, ProtoError> {
         let mut h2 = match h2.ready().await {
             Ok(h2) => h2,
             Err(err) => {
@@ -172,10 +171,53 @@ impl HttpsClientStream {
                 }
             }
         };
+        Ok(response_bytes)
+    }
+
+    async fn inner_send_bytes_resp(
+        h2: SendRequest<Bytes>,
+        message: Bytes,
+        name_server_name: Arc<str>,
+    ) -> Result<BytesMut, ProtoError> {
+        Self::inner_send_bytes(h2, message, name_server_name).await
+    }
+
+    async fn inner_send(
+        h2: SendRequest<Bytes>,
+        message: Bytes,
+        name_server_name: Arc<str>,
+        name_server: SocketAddr,
+    ) -> Result<DnsResponse, ProtoError> {
+        let bytes = Self::inner_send_bytes(h2, message, name_server_name).await?;
 
         // and finally convert the bytes into a DNS message
-        let message = SerialMessage::new(response_bytes.to_vec(), name_server).to_message()?;
+        let message = SerialMessage::new(bytes.to_vec(), name_server).to_message()?;
         Ok(message.into())
+    }
+    /// send a DnsRequest but don't decode the received message, only return the raw bytes
+    pub fn send_bytes(&mut self, message: Vec<u8>) -> DnsResponseStream<BytesMut> {
+        if self.is_shutdown {
+            panic!("can not send messages after stream is shutdown")
+        }
+
+        // // per the RFC, a zero id allows for the HTTP packet to be cached better
+        // message.set_id(0);
+
+        // let bytes = match message.to_vec() {
+        //     Ok(bytes) => bytes,
+        //     Err(err) => return err.into(),
+        // };
+
+        Box::pin(Self::inner_send_bytes_resp(
+            self.h2.clone(),
+            Bytes::from(message),
+            Arc::clone(&self.name_server_name),
+        ))
+        .into()
+    }
+    /// where the stream will send queries to
+    pub fn name_server(&self) -> SocketAddr {
+        self.name_server
     }
 }
 
